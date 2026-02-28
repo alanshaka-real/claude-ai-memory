@@ -92,9 +92,25 @@ def test_list_entries(client, mock_ov):
     assert len(items) == 2
 
 def test_delete_entry(client, mock_ov):
-    assert client.delete_entry("/home/user/proj", "viking://x/y") is True
-    mock_ov.rm.assert_called_once()
+    # Use a valid URI that belongs to the project
+    project_path = "/home/user/proj"
+    project_uri = client.pm.get_project_uri(project_path)
+    target = f"{project_uri}/sessions/file1.md"
+    assert client.delete_entry(project_path, target) is True
+    mock_ov.rm.assert_called_once_with(target)
 
 def test_delete_entry_failure(client, mock_ov):
+    project_path = "/home/user/proj"
+    project_uri = client.pm.get_project_uri(project_path)
+    target = f"{project_uri}/sessions/file1.md"
     mock_ov.rm.side_effect = Exception("not found")
-    assert client.delete_entry("/home/user/proj", "viking://x/y") is False
+    assert client.delete_entry(project_path, target) is False
+
+def test_delete_entry_wrong_project(client, mock_ov):
+    # URI from a different project should be rejected
+    assert client.delete_entry("/home/user/proj", "viking://projects/other123/sessions/x") is False
+    mock_ov.rm.assert_not_called()
+
+def test_update_entry_wrong_project(client, mock_ov):
+    assert client.update_entry("/home/user/proj", "viking://projects/other123/x", "new") is False
+    mock_ov.rm.assert_not_called()

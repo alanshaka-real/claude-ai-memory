@@ -86,7 +86,8 @@ def context_save(
         client.init_project(project_path)
 
     parsed = []
-    for e in entries:
+    errors = []
+    for i, e in enumerate(entries):
         try:
             parsed.append(MemoryEntry(
                 type=EntryType(e["type"]),
@@ -95,10 +96,15 @@ def context_save(
                 tags=e.get("tags", []),
             ))
         except (KeyError, ValueError) as err:
-            logger.warning(f"Skipping invalid entry: {err}")
+            logger.warning(f"Skipping invalid entry {i}: {err}")
+            errors.append(f"Entry {i}: {err}")
 
     saved = client.save_entries(project_path, parsed)
-    return {"saved": saved, "total": len(entries)}
+    result: dict[str, Any] = {"saved": saved, "total": len(entries)}
+    if errors:
+        result["skipped"] = len(errors)
+        result["errors"] = errors
+    return result
 
 
 @mcp.tool()

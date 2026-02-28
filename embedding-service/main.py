@@ -1,5 +1,4 @@
 from __future__ import annotations
-import time
 from typing import Union
 from fastapi import FastAPI
 from pydantic import BaseModel

@@ -66,17 +66,20 @@ class VikingClient:
             try:
                 subdir = self.pm.get_dir_for_entry_type(entry.type)
                 target_uri = self.pm.get_entry_uri(project_path, subdir)
+                content = self._format_entry(entry)
                 timestamp = int(time.time() * 1000)
                 title_slug = (entry.title or entry.type).replace(" ", "-")[:30]
-                content = self._format_entry(entry)
+                suffix = f"-{timestamp}-{title_slug}.md"
                 with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".md", delete=False
+                    mode="w", suffix=suffix, delete=False
                 ) as f:
                     f.write(content)
                     tmp_path = f.name
-                self._ov.add_resource(tmp_path, target=target_uri)
-                Path(tmp_path).unlink(missing_ok=True)
-                saved += 1
+                try:
+                    self._ov.add_resource(tmp_path, target=target_uri)
+                    saved += 1
+                finally:
+                    Path(tmp_path).unlink(missing_ok=True)
             except Exception as e:
                 logger.error(f"Failed to save entry: {e}")
         return saved
@@ -188,7 +191,16 @@ class VikingClient:
         except Exception:
             return []
 
+    def _validate_project_uri(self, project_path: str, target_uri: str) -> bool:
+        base_uri = self.pm.get_project_uri(project_path)
+        if not target_uri.startswith(base_uri):
+            logger.error(f"URI {target_uri} does not belong to project {project_path}")
+            return False
+        return True
+
     def delete_entry(self, project_path: str, target_uri: str) -> bool:
+        if not self._validate_project_uri(project_path, target_uri):
+            return False
         try:
             self._ov.rm(target_uri)
             return True
@@ -197,14 +209,18 @@ class VikingClient:
             return False
 
     def update_entry(self, project_path: str, target_uri: str, content: str) -> bool:
+        if not self._validate_project_uri(project_path, target_uri):
+            return False
         try:
-            self._ov.rm(target_uri)
             with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
                 f.write(content)
                 tmp_path = f.name
-            parent_uri = "/".join(target_uri.rsplit("/", 1)[:-1])
-            self._ov.add_resource(tmp_path, target=parent_uri)
-            Path(tmp_path).unlink(missing_ok=True)
+            try:
+                self._ov.rm(target_uri)
+                parent_uri = "/".join(target_uri.rsplit("/", 1)[:-1])
+                self._ov.add_resource(tmp_path, target=parent_uri)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
             return True
         except Exception as e:
             logger.error(f"Update failed: {e}")

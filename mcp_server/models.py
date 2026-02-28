@@ -1,7 +1,15 @@
 from __future__ import annotations
-from enum import StrEnum
+import sys
 from typing import Any, Optional
 from pydantic import BaseModel, Field
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 
 class EntryType(StrEnum):

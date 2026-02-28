@@ -1,0 +1,26 @@
+{
+  "storage": {
+    "workspace": "/app/data"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "stdout"
+  },
+  "embedding": {
+    "dense": {
+      "api_base": "http://embedding:8100/v1",
+      "api_key": "local",
+      "provider": "openai",
+      "dimension": 384,
+      "model": "all-MiniLM-L6-v2"
+    },
+    "max_concurrent": 10
+  },
+  "vlm": {
+    "api_base": "https://api.minimaxi.com/anthropic",
+    "api_key": "YOUR_MINIMAX_API_KEY_HERE",
+    "provider": "litellm",
+    "model": "MiniMax-M2.5",
+    "max_concurrent": 10
+  }
+}

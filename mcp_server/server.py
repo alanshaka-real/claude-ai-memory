@@ -1,0 +1,148 @@
+from __future__ import annotations
+import logging
+import os
+from typing import Any, Optional
+
+from mcp.server.fastmcp import FastMCP
+from pydantic import Field
+
+from mcp_server.models import EntryType, MemoryEntry
+from mcp_server.viking_client import VikingClient
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("claude-ai-memory")
+
+mcp = FastMCP(
+    "claude-ai-memory",
+)
+
+_client: Optional[VikingClient] = None
+
+
+def get_client() -> VikingClient:
+    global _client
+    if _client is None:
+        url = os.environ.get("OPENVIKING_URL", "http://localhost:1933")
+        _client = VikingClient(openviking_url=url)
+    return _client
+
+
+@mcp.tool()
+def context_load(project_path: str) -> dict[str, Any]:
+    """Load project context overview. Call once at session start.
+
+    Returns project summary, recent session history, pending items,
+    and active decisions. If the project is not registered, returns
+    {"registered": false}.
+    """
+    client = get_client()
+    return client.load_context(project_path)
+
+
+@mcp.tool()
+def context_search(
+    project_path: str,
+    query: str,
+    scope: str = "all",
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Semantic search across project memory.
+
+    Search for relevant historical context using natural language.
+    Results include L1-level content directly — no follow-up needed.
+
+    Args:
+        project_path: Absolute path to project root.
+        query: Natural language search query.
+        scope: Search scope — "all", "sessions", "decisions", "changes", "knowledge".
+        limit: Maximum number of results (default 5).
+    """
+    client = get_client()
+    if not client.is_available():
+        return {"error": "OpenViking not available", "results": []}
+    results = client.search(project_path, query, scope=scope, limit=limit)
+    return {"results": results}
+
+
+@mcp.tool()
+def context_save(
+    project_path: str,
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Batch save memory entries to project context.
+
+    Save session summaries, decisions, changes, knowledge, and TODOs.
+    Multiple entries can be saved in a single call.
+
+    Args:
+        project_path: Absolute path to project root.
+        entries: List of entries, each with "type", "content", and optionally "title" and "tags".
+    """
+    client = get_client()
+    if not client.is_available():
+        return {"error": "OpenViking not available", "saved": 0}
+
+    if not client.project_exists(project_path):
+        client.init_project(project_path)
+
+    parsed = []
+    for e in entries:
+        try:
+            parsed.append(MemoryEntry(
+                type=EntryType(e["type"]),
+                title=e.get("title"),
+                content=e["content"],
+                tags=e.get("tags", []),
+            ))
+        except (KeyError, ValueError) as err:
+            logger.warning(f"Skipping invalid entry: {err}")
+
+    saved = client.save_entries(project_path, parsed)
+    return {"saved": saved, "total": len(entries)}
+
+
+@mcp.tool()
+def context_manage(
+    project_path: str,
+    action: str,
+    target: Optional[str] = None,
+    content: Optional[str] = None,
+) -> dict[str, Any]:
+    """Manage project memory: list, delete, update, or initialize.
+
+    Args:
+        project_path: Absolute path to project root.
+        action: One of "list", "delete", "update", "init_project".
+        target: Target URI or subdirectory (for list/delete/update).
+        content: New content (for update action).
+    """
+    client = get_client()
+    if not client.is_available():
+        return {"error": "OpenViking not available"}
+
+    if action == "init_project":
+        pid = client.init_project(project_path)
+        return {"success": True, "project_id": pid}
+    elif action == "list":
+        items = client.list_entries(project_path, subdir=target or "")
+        return {"items": items}
+    elif action == "delete":
+        if not target:
+            return {"error": "target is required for delete"}
+        ok = client.delete_entry(project_path, target)
+        return {"success": ok}
+    elif action == "update":
+        if not target or not content:
+            return {"error": "target and content are required for update"}
+        ok = client.update_entry(project_path, target, content)
+        return {"success": ok}
+    else:
+        return {"error": f"Unknown action: {action}"}
+
+
+def main():
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()

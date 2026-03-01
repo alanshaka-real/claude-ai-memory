@@ -23,7 +23,8 @@ def get_client() -> VikingClient:
     global _client
     if _client is None:
         url = os.environ.get("OPENVIKING_URL", "http://localhost:1933")
-        _client = VikingClient(openviking_url=url)
+        api_key = os.environ.get("OPENVIKING_API_KEY", "local-dev-key")
+        _client = VikingClient(openviking_url=url, api_key=api_key)
     return _client
 
 

@@ -11,36 +11,55 @@ from mcp_server.project_manager import ProjectManager
 logger = logging.getLogger(__name__)
 
 try:
-    from openviking import SyncOpenViking
+    from openviking import SyncHTTPClient
 except ImportError:
-    SyncOpenViking = None
+    SyncHTTPClient = None
 
 
 class VikingClient:
     """Wraps OpenViking SDK with project-aware operations."""
 
-    def __init__(self, openviking_url: str = "http://localhost:1933"):
+    def __init__(
+        self,
+        openviking_url: str = "http://localhost:1933",
+        api_key: str = "local-dev-key",
+    ):
         self.url = openviking_url
+        self.api_key = api_key
         self.pm = ProjectManager()
         self._ov: Optional[Any] = None
         self._connect()
 
     def _connect(self):
-        if SyncOpenViking is None:
+        if SyncHTTPClient is None:
             logger.warning("openviking package not installed")
             return
         try:
-            self._ov = SyncOpenViking(url=self.url)
+            self._ov = SyncHTTPClient(url=self.url, api_key=self.api_key)
+            self._ov.initialize()
+            # Force file upload even for localhost (needed when server runs in Docker)
+            self._ov._async_client._is_local_server = lambda: False
         except Exception as e:
             logger.error(f"Failed to connect to OpenViking: {e}")
             self._ov = None
 
     def is_available(self) -> bool:
         if self._ov is None:
-            return False
+            # Try to reconnect if previously failed
+            self._connect()
+            if self._ov is None:
+                return False
         try:
-            return self._ov.is_healthy()
+            healthy = self._ov.is_healthy()
+            if not healthy:
+                # Try reconnect on unhealthy
+                self._connect()
+                if self._ov is None:
+                    return False
+                return self._ov.is_healthy()
+            return True
         except Exception:
+            self._ov = None
             return False
 
     def project_exists(self, project_path: str) -> bool:
@@ -48,16 +67,21 @@ class VikingClient:
             return False
         try:
             uri = self.pm.get_project_uri(project_path)
-            self._ov.ls(uri)
+            result = self._ov.ls(uri)
+            # ls returns items; if we get here without error, project exists
             return True
-        except Exception:
+        except Exception as e:
+            logger.debug(f"project_exists check failed for {project_path}: {e}")
             return False
 
     def init_project(self, project_path: str) -> str:
         pid = self.pm.get_project_id(project_path)
         base_uri = self.pm.get_project_uri(project_path)
         for subdir in ["sessions", "decisions", "changes", "knowledge"]:
-            self._ov.mkdir(f"{base_uri}/{subdir}")
+            try:
+                self._ov.mkdir(f"{base_uri}/{subdir}")
+            except Exception:
+                pass  # Directory may already exist
         return pid
 
     def save_entries(self, project_path: str, entries: list[MemoryEntry]) -> int:
@@ -131,13 +155,20 @@ class VikingClient:
             result["recent_sessions"] = []
 
         try:
-            todo_results = self._ov.find(
+            todo_find = self._ov.find(
                 "todo pending next", target_uri=f"{base_uri}/sessions", limit=5
             )
-            result["pending_items"] = [
-                r.get("content", r.get("abstract", ""))
-                for r in todo_results.get("results", [])
-            ]
+            todo_contexts = getattr(todo_find, "resources", []) or []
+            result["pending_items"] = []
+            for ctx in todo_contexts:
+                content = getattr(ctx, "overview", None) or getattr(ctx, "abstract", "")
+                if not content:
+                    try:
+                        content = self._ov.read(getattr(ctx, "uri", ""))
+                    except Exception:
+                        pass
+                if content:
+                    result["pending_items"].append(content)
         except Exception:
             result["pending_items"] = []
 
@@ -168,14 +199,24 @@ class VikingClient:
                 target_uri = f"{base_uri}/{dir_name}"
 
         try:
-            results = self._ov.find(query, target_uri=target_uri, limit=limit)
+            find_result = self._ov.find(query, target_uri=target_uri, limit=limit)
+            # FindResult has .resources, .memories, .skills lists
+            contexts = getattr(find_result, "resources", []) or []
             output = []
-            for r in results.get("results", []):
+            for ctx in contexts:
+                uri = getattr(ctx, "uri", "")
+                content = getattr(ctx, "overview", None) or getattr(ctx, "abstract", "")
+                # If content is empty, read the actual file
+                if not content and uri:
+                    try:
+                        content = self._ov.read(uri)
+                    except Exception:
+                        pass
                 output.append({
-                    "type": r.get("type", "unknown"),
-                    "uri": r.get("uri", ""),
-                    "relevance": r.get("score", 0.0),
-                    "content": r.get("overview", r.get("abstract", r.get("content", ""))),
+                    "type": str(getattr(ctx, "context_type", "unknown")),
+                    "uri": uri,
+                    "relevance": getattr(ctx, "score", 0.0),
+                    "content": content or "",
                 })
             return output
         except Exception as e:

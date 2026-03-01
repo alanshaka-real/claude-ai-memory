@@ -19,7 +19,7 @@ class ProjectManager:
 
     def get_project_uri(self, project_path: str) -> str:
         """Get the OpenViking URI root for a project."""
-        return f"viking://projects/{self.get_project_id(project_path)}"
+        return f"viking://resources/projects/{self.get_project_id(project_path)}"
 
     def get_entry_uri(self, project_path: str, subdir: str) -> str:
         """Get the OpenViking URI for a specific entry type directory."""

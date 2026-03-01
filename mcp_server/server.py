@@ -4,12 +4,17 @@ import os
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import Field
 
 from mcp_server.models import EntryType, MemoryEntry
 from mcp_server.viking_client import VikingClient
 
-logging.basicConfig(level=logging.INFO)
+_log_file = os.path.join(os.path.dirname(__file__), "..", "logs", "mcp-memory.log")
+os.makedirs(os.path.dirname(_log_file), exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    filename=_log_file,
+)
 logger = logging.getLogger("claude-ai-memory")
 
 mcp = FastMCP(
@@ -29,7 +34,7 @@ def get_client() -> VikingClient:
 
 
 @mcp.tool()
-def context_load(project_path: str) -> dict[str, Any]:
+async def context_load(project_path: str) -> dict[str, Any]:
     """Load project context overview. Call once at session start.
 
     Returns project summary, recent session history, pending items,
@@ -37,11 +42,11 @@ def context_load(project_path: str) -> dict[str, Any]:
     {"registered": false}.
     """
     client = get_client()
-    return client.load_context(project_path)
+    return await client.load_context(project_path)
 
 
 @mcp.tool()
-def context_search(
+async def context_search(
     project_path: str,
     query: str,
     scope: str = "all",
@@ -59,14 +64,14 @@ def context_search(
         limit: Maximum number of results (default 5).
     """
     client = get_client()
-    if not client.is_available():
+    if not await client.is_available():
         return {"error": "OpenViking not available", "results": []}
-    results = client.search(project_path, query, scope=scope, limit=limit)
+    results = await client.search(project_path, query, scope=scope, limit=limit)
     return {"results": results}
 
 
 @mcp.tool()
-def context_save(
+async def context_save(
     project_path: str,
     entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -80,11 +85,11 @@ def context_save(
         entries: List of entries, each with "type", "content", and optionally "title" and "tags".
     """
     client = get_client()
-    if not client.is_available():
+    if not await client.is_available():
         return {"error": "OpenViking not available", "saved": 0}
 
-    if not client.project_exists(project_path):
-        client.init_project(project_path)
+    if not await client.project_exists(project_path):
+        await client.init_project(project_path)
 
     parsed = []
     errors = []
@@ -100,7 +105,7 @@ def context_save(
             logger.warning(f"Skipping invalid entry {i}: {err}")
             errors.append(f"Entry {i}: {err}")
 
-    saved = client.save_entries(project_path, parsed)
+    saved = await client.save_entries(project_path, parsed)
     result: dict[str, Any] = {"saved": saved, "total": len(entries)}
     if errors:
         result["skipped"] = len(errors)
@@ -109,7 +114,7 @@ def context_save(
 
 
 @mcp.tool()
-def context_manage(
+async def context_manage(
     project_path: str,
     action: str,
     target: Optional[str] = None,
@@ -124,24 +129,24 @@ def context_manage(
         content: New content (for update action).
     """
     client = get_client()
-    if not client.is_available():
+    if not await client.is_available():
         return {"error": "OpenViking not available"}
 
     if action == "init_project":
-        pid = client.init_project(project_path)
+        pid = await client.init_project(project_path)
         return {"success": True, "project_id": pid}
     elif action == "list":
-        items = client.list_entries(project_path, subdir=target or "")
+        items = await client.list_entries(project_path, subdir=target or "")
         return {"items": items}
     elif action == "delete":
         if not target:
             return {"error": "target is required for delete"}
-        ok = client.delete_entry(project_path, target)
+        ok = await client.delete_entry(project_path, target)
         return {"success": ok}
     elif action == "update":
         if not target or not content:
             return {"error": "target and content are required for update"}
-        ok = client.update_entry(project_path, target, content)
+        ok = await client.update_entry(project_path, target, content)
         return {"success": ok}
     else:
         return {"error": f"Unknown action: {action}"}
